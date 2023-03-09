@@ -1,0 +1,87 @@
+import com.android.build.gradle.AbstractAppExtension
+import com.android.build.gradle.LibraryExtension
+
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+
+  ext.KOTLIN_VERSION = "1.7.20"
+  ext.ANDROID_PLUGIN_VERSION = '7.4.2'
+  ext.KSP_VERSION = '1.7.20-1.0.7'
+
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  dependencies {
+    classpath "com.android.tools.build:gradle:$ANDROID_PLUGIN_VERSION"
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$KOTLIN_VERSION"
+    // Upload with: (see RELEASING.md)
+    // ./gradlew publish
+    classpath 'com.vanniktech:gradle-maven-publish-plugin:0.22.0'
+    // Dokka is needed on classpath for vanniktech publish plugin
+    classpath "org.jetbrains.dokka:dokka-gradle-plugin:1.6.10"
+  }
+}
+
+plugins {
+  // Run ./gradlew dependencyUpdates to see avilable version updates
+  id 'com.github.ben-manes.versions' version '0.42.0'
+  id "com.google.devtools.ksp" version "$KSP_VERSION"
+}
+
+allprojects {
+
+  repositories {
+    google()
+    mavenCentral()
+  }
+
+  // Prevent javadoc task complaining about errors with kotlin files
+  tasks.withType(Javadoc) {
+    excludes = ['**/*.kt']
+  }
+}
+
+subprojects { project ->
+  apply from: "$rootDir/blessedDeps.gradle"
+  apply plugin: 'com.github.ben-manes.versions'
+  apply from: "${project.rootDir}/ktlint.gradle"
+
+  afterEvaluate {
+    if (project.tasks.findByName('check')) {
+      check.dependsOn('ktlint')
+    }
+
+    if (project.extensions.findByType(LibraryExtension.class) != null) {
+      project.android.libraryVariants.all { variant ->
+        def outputFolder = new File("build/generated/ksp/${variant.name}/kotlin")
+        variant.addJavaSourceFoldersToModel(outputFolder)
+        android.sourceSets[variant.name].java {
+          srcDir(outputFolder)
+        }
+      }
+    } else if (project.extensions.findByType(AbstractAppExtension.class) != null) {
+      project.android.applicationVariants.all { variant ->
+        def outputFolder = new File("build/generated/ksp/${variant.name}/kotlin")
+        variant.addJavaSourceFoldersToModel(outputFolder)
+        android.sourceSets[variant.name].java {
+          srcDir(outputFolder)
+        }
+      }
+    }
+  }
+}
+
+def isNonStable = { String version ->
+  def stableKeyword = ['RELEASE', 'FINAL', 'GA'].any { it -> version.toUpperCase().contains(it) }
+  def regex = /^[0-9,.v-]+(-r)?$/
+  return !stableKeyword && !(version ==~ regex)
+}
+
+tasks.named("dependencyUpdates").configure {
+  // disallow release candidates as upgradable versions from stable versions
+  rejectVersionIf {
+    isNonStable(it.candidate.version) && !isNonStable(it.currentVersion)
+  }
+}
